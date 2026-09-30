@@ -1,4 +1,5 @@
 from pathlib import Path
+from functools import lru_cache
 
 import torch
 
@@ -13,6 +14,14 @@ DEFAULT_CLAUSE_MODEL = ROOT / "Clause_Seg" / "clause_segmentation_model_best.pt"
 MEMORY_EMBEDDING_MODEL = "all_mpnet_base_v2"
 MEMORY_EMBEDDING_DIMENSION = 768
 
+
+@lru_cache(maxsize=None)
+def _load_memory_model(model_path: str, device_name: str) -> MemoryRanker:
+    model = MemoryRanker(input_dim=MEMORY_EMBEDDING_DIMENSION).to(device_name)
+    state_dict = torch.load(model_path, map_location=device_name, weights_only=True)
+    model.load_state_dict(state_dict)
+    model.eval()
+    return model
 
 
 class _FullMemoryRanker:
@@ -33,10 +42,8 @@ class _FullMemoryRanker:
 
         self.segmenter = FullClauseSegmentation(str(clause_model_path), device=self.device)
         self.embeddings = EmbeddingModels(device=self.device)
-        self.model = MemoryRanker(input_dim=MEMORY_EMBEDDING_DIMENSION).to(self.device)
-        state_dict = torch.load(memory_model_path, map_location=self.device, weights_only=True)
-        self.model.load_state_dict(state_dict)
-        self.model.eval()
+        self.embeddings.load_model(MEMORY_EMBEDDING_MODEL)
+        self.model = _load_memory_model(str(memory_model_path), str(self.device))
 
     def rank(self, text: str) -> list[dict[str, object]]:
         clauses = self.segmenter.segment(text)

@@ -24,36 +24,47 @@ OUTPUT_PATHS = {
 }
 
 
+@lru_cache(maxsize=None)
+def _load_cached_sentence_transformer(name: str, device: str) -> SentenceTransformer:
+    """Download an encoder if needed, cache it locally, and keep it resident."""
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    model_id = MODEL_IDS[name]
+    local_dir = MODEL_DIR / name
+    if (local_dir / "modules.json").is_file():
+        model = SentenceTransformer(str(local_dir), device=device)
+    else:
+        print(f"Downloading/loading {model_id}...")
+        model = SentenceTransformer(
+            model_id,
+            device=device,
+            cache_folder=str(MODEL_DIR / "huggingface_cache"),
+        )
+        local_dir.mkdir(parents=True, exist_ok=True)
+        model.save(str(local_dir))
+
+    print(f"Ready: {model_id} ({local_dir}) on {device}")
+    return model
+
+
 class EmbeddingModels:
-    """Load the requested local encoders once, then encode by backend name."""
+    """Load encoders on first use and keep them resident for this process."""
 
     def __init__(self, *, device: str | torch.device | None = None) -> None:
         self.device = str(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         self.local_models: dict[str, SentenceTransformer] = {}
-        self._load_sentence_transformers()
 
-    def _load_sentence_transformers(self) -> None:
-        MODEL_DIR.mkdir(parents=True, exist_ok=True)
-        for name, model_id in tqdm(
-            MODEL_IDS.items(),
-            desc="Loading embedding models",
-            unit="model",
-        ):
-            local_dir = MODEL_DIR / name
-            if local_dir.exists() and any(local_dir.iterdir()):
-                source = str(local_dir)
-            else:
-                # from_pretrained downloads the complete model before returning.
-                source = model_id
-            print(f"Loading {model_id}...")
-            model = SentenceTransformer(source, device=self.device)
-            if source == model_id:
-                try:
-                    model.save(str(local_dir))
-                except OSError as exc:
-                    print(f"Warning: could not cache {model_id} at {local_dir}: {exc}")
-            self.local_models[name] = model
-            print(f"Ready: {model_id} ({local_dir})")
+    def _load_sentence_transformer(self, name: str) -> SentenceTransformer:
+        if name in self.local_models:
+            return self.local_models[name]
+        model = _load_cached_sentence_transformer(name, self.device)
+        self.local_models[name] = model
+        return model
+
+    def load_model(self, model_name: str) -> SentenceTransformer:
+        """Load and warm the named encoder before inference starts."""
+        if model_name not in MODEL_IDS:
+            raise KeyError(f"Unknown embedding model: {model_name}")
+        return self._load_sentence_transformer(model_name)
 
     def encode(self, model_name: str, texts: list[str]) -> np.ndarray:
         if model_name not in MODEL_IDS:
@@ -63,7 +74,7 @@ class EmbeddingModels:
             return np.empty((0, dimension), dtype=np.float32)
 
         values = np.asarray(
-            self.local_models[model_name].encode(
+            self._load_sentence_transformer(model_name).encode(
                 texts,
                 normalize_embeddings=True,
                 convert_to_numpy=True,
@@ -74,17 +85,18 @@ class EmbeddingModels:
         return values
 
     def dimension(self, model_name: str) -> int:
-        return int(self.local_models[model_name].get_sentence_embedding_dimension())
+        return int(self._load_sentence_transformer(model_name).get_sentence_embedding_dimension())
 
 
-@lru_cache(maxsize=1)
-def _get_models() -> EmbeddingModels:
-    return EmbeddingModels()
+@lru_cache(maxsize=None)
+def _get_models(device: str) -> EmbeddingModels:
+    return EmbeddingModels(device=device)
 
 
 def embed(text: str, model_name: str = "minilm") -> np.ndarray:
     """Convenience single-text helper used by inference scripts."""
-    return _get_models().encode(model_name, [text])[0]
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    return _get_models(device).encode(model_name, [text])[0]
 
 
 def embed_all_stories() -> dict[str, Path]:
@@ -92,7 +104,7 @@ def embed_all_stories() -> dict[str, Path]:
     if not PAIRED_DATASET_PATH.exists():
         raise FileNotFoundError(f"Source stories not found: {PAIRED_DATASET_PATH}")
 
-    # Preflight all three backends before segmenting/embedding any source story.
+    # Construct the wrappers; each encoder is downloaded/loaded on first use.
     models = EmbeddingModels()
 
     import csv

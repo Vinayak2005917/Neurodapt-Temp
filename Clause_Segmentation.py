@@ -1,14 +1,24 @@
 import time
-from xml.parsers.expat import model
+from functools import lru_cache
 import torch
 
 from transformers import AutoTokenizer, AutoModel
 
 from Clause_Seg.model import ClauseSegmentationModel
 
-from Clause_Seg.embeddings import text_to_embeddings, text_to_tokens
+from Clause_Seg.embeddings import _load_bert, text_to_embeddings, text_to_tokens
 
 import re
+
+
+@lru_cache(maxsize=None)
+def _load_clause_model(model_path: str, device_name: str):
+    model = ClauseSegmentationModel()
+    state_dict = torch.load(model_path, map_location=device_name, weights_only=True)
+    model.load_state_dict(state_dict)
+    model.to(device_name)
+    model.eval()
+    return model
 
 import re
 
@@ -107,12 +117,9 @@ def post_processing(clauses, min_tokens=4):
 
 class FullClauseSegmentation:
     def __init__(self, model_path, device='cuda'):
-        self.device = device
-        self.model = ClauseSegmentationModel()
-        state_dict = torch.load(model_path, map_location=device, weights_only=True)
-        self.model.load_state_dict(state_dict)
-        self.model.to(device)
-        self.model.eval()
+        self.device = torch.device(device)
+        self.model = _load_clause_model(str(model_path), str(self.device))
+        _load_bert(str(self.device))
 
     def predict_boundaries(self, embeddings):
 
@@ -135,9 +142,9 @@ class FullClauseSegmentation:
             return []
 
         # Convert text to embeddings
-        embeddings = text_to_embeddings(text).to(self.device)
+        embeddings = text_to_embeddings(text, device=self.device)
 
-        tokens = text_to_tokens(text)
+        tokens = text_to_tokens(text, device=self.device)
 
 
         #now we send this to the model and get the logits

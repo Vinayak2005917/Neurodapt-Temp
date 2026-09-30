@@ -2,29 +2,31 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import torch
-from sentence_transformers import SentenceTransformer
 
+from mem_ranker.data_pipeline.embedding import EmbeddingModels
 from mem_ranker.model import MemoryRanker
 
 
-EMBEDDING_MODEL_NAME = "sentence-transformers/all-mpnet-base-v2"
-EMBEDDING_MODEL_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "mem_ranker"
-    / "data_pipeline"
-    / "models"
-    / "all_mpnet_base_v2"
-)
 EMBEDDING_DIMENSION = 768
 # Valid pairwise memorability rewards are bounded to [-1, 1].
 LENGTH_REJECTION_REWARD = -1.5
 LENGTH_PENALTY_SCALE = 1.0
 INVALID_SCORE_WEIGHT = 0.25
+
+
+@lru_cache(maxsize=None)
+def _load_memory_ranker(memory_model_path: str, device_name: str) -> MemoryRanker:
+    model = MemoryRanker(input_dim=EMBEDDING_DIMENSION).to(device_name)
+    state_dict = torch.load(memory_model_path, map_location=device_name, weights_only=True)
+    model.load_state_dict(state_dict)
+    model.eval()
+    return model
 
 
 class MemoryRewardScorer:
@@ -38,24 +40,10 @@ class MemoryRewardScorer:
             raise RuntimeError("CUDA was requested for reward scoring but is unavailable")
 
         self.device = torch.device(selected_device)
-        embedding_source = (
-            str(EMBEDDING_MODEL_PATH)
-            if EMBEDDING_MODEL_PATH.is_dir()
-            else EMBEDDING_MODEL_NAME
+        self.embedding_model = EmbeddingModels(device=self.device).load_model(
+            "all_mpnet_base_v2"
         )
-        self.embedding_model = SentenceTransformer(
-            embedding_source,
-            device=str(self.device),
-        )
-        self.model = MemoryRanker(input_dim=EMBEDDING_DIMENSION)
-        state_dict = torch.load(
-            memory_model_path,
-            map_location="cpu",
-            weights_only=True,
-        )
-        self.model.load_state_dict(state_dict)
-        self.model.to(self.device)
-        self.model.eval()
+        self.model = _load_memory_ranker(str(memory_model_path), str(self.device))
         self.original_embedding_cache: dict[str, np.ndarray] = {}
 
     def cache_originals(self, originals: list[str]) -> None:

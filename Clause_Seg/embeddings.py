@@ -1,18 +1,13 @@
-import torch
-from transformers import AutoTokenizer, AutoModel
+from functools import lru_cache
 from pathlib import Path
 
+import torch
+from transformers import AutoModel, AutoTokenizer
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+MODEL_ID = "google-bert/bert-base-uncased"
 LOCAL_BERT_MODEL = Path(__file__).resolve().parent.parent / "models" / "bert-base-uncased"
-bert_model_source = str(LOCAL_BERT_MODEL) if LOCAL_BERT_MODEL.exists() else "google-bert/bert-base-uncased"
-
-print(f"Using device: {DEVICE}")
-
-
-tokenizer = AutoTokenizer.from_pretrained(bert_model_source)
-model = AutoModel.from_pretrained(bert_model_source).to(DEVICE)
-model.eval()
+HF_CACHE = LOCAL_BERT_MODEL.parent / "huggingface_cache"
 
 # BERT-base has 512 positional embeddings. Keep the token sequence and the
 # returned token list truncated identically so clause segmentation never gets
@@ -20,11 +15,51 @@ model.eval()
 MAX_TOKEN_LENGTH = 512
 
 
+def _local_model_is_ready() -> bool:
+    return (
+        (LOCAL_BERT_MODEL / "config.json").is_file()
+        and any(
+            (LOCAL_BERT_MODEL / filename).is_file()
+            for filename in ("model.safetensors", "pytorch_model.bin")
+        )
+        and any(
+            (LOCAL_BERT_MODEL / filename).is_file()
+            for filename in ("tokenizer.json", "vocab.txt")
+        )
+    )
+
+
+@lru_cache(maxsize=None)
+def _load_bert(device_name: str):
+    """Download BERT once, save a local copy, and retain it per device."""
+    LOCAL_BERT_MODEL.parent.mkdir(parents=True, exist_ok=True)
+    HF_CACHE.mkdir(parents=True, exist_ok=True)
+
+    if _local_model_is_ready():
+        source = str(LOCAL_BERT_MODEL)
+        tokenizer = AutoTokenizer.from_pretrained(source, local_files_only=True)
+        model = AutoModel.from_pretrained(source, local_files_only=True)
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, cache_dir=str(HF_CACHE))
+        model = AutoModel.from_pretrained(MODEL_ID, cache_dir=str(HF_CACHE))
+        LOCAL_BERT_MODEL.mkdir(parents=True, exist_ok=True)
+        tokenizer.save_pretrained(LOCAL_BERT_MODEL)
+        model.save_pretrained(LOCAL_BERT_MODEL, safe_serialization=True)
+
+    selected_device = torch.device(device_name)
+    print(f"Using BERT model from {LOCAL_BERT_MODEL} on {selected_device}")
+    model = model.to(selected_device)
+    model.eval()
+    return tokenizer, model, selected_device
+
+
 #tokenize the original text
 #embedd the original text
 #cat the embeddings of each token with the embeddings of the original text
 #return [n,2*embedding_dim] where n is the number of tokens in the original text
-def text_to_embeddings(text):
+def text_to_embeddings(text, device=None):
+    selected_device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+    tokenizer, model, selected_device = _load_bert(str(selected_device))
     encoding = tokenizer(
         text,
         return_tensors="pt",
@@ -46,7 +81,7 @@ def text_to_embeddings(text):
             encoding[key] = encoding[key].long()
 
     encoding = {
-        key: value.to(DEVICE)
+        key: value.to(selected_device)
         for key, value in encoding.items()
     }
 
@@ -70,7 +105,9 @@ def text_to_embeddings(text):
 
     return concatenated_embeddings
 
-def text_to_tokens(text):
+def text_to_tokens(text, device=None):
+    selected_device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+    tokenizer, _, _ = _load_bert(str(selected_device))
     encoding = tokenizer(
         text,
         return_tensors="pt",
