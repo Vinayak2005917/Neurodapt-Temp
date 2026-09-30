@@ -155,7 +155,6 @@ training_args = GRPOConfig(
     per_device_train_batch_size=2,
     gradient_accumulation_steps=8,
 
-    # Number of completions generated for each prompt.
     num_generations=2,
 
     learning_rate=5e-6,
@@ -166,15 +165,14 @@ training_args = GRPOConfig(
     save_steps=500,
     save_total_limit=2,
 
-    fp16=True,
+    bf16=True,
+    fp16=False,
     gradient_checkpointing=True,
 
-    max_prompt_length=256,
     max_completion_length=24,
 
     gradient_checkpointing_kwargs={"use_reentrant": False},
 
-    # Do NOT use vLLM initially.
     use_vllm=False,
 
     report_to="none",
