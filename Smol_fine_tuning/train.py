@@ -23,7 +23,7 @@ from reward_scorer import MemoryRewardScorer, reward_function_factory
 MODEL_PATH = "./models/Qwen2.5-0.5B-Instruct"
 DATASET_PATH = "./data_pipeline/preprocessed_grpo.pt"
 OUTPUT_DIR = "./outputs/Qwen2.5-0.5B-Instruct-GRPO"
-MAX_TRAIN_EXAMPLES = int(os.getenv("GRPO_MAX_TRAIN_EXAMPLES", "1500"))
+MAX_TRAIN_EXAMPLES = int(os.getenv("GRPO_MAX_TRAIN_EXAMPLES", "20000"))
 TRAIN_SAMPLE_SEED = int(os.getenv("GRPO_TRAIN_SAMPLE_SEED", "42"))
 
 if MAX_TRAIN_EXAMPLES <= 0:
@@ -155,7 +155,7 @@ training_args = GRPOConfig(
     per_device_train_batch_size=2,
     gradient_accumulation_steps=8,
 
-    num_generations=2,
+    num_generations=4,
 
     learning_rate=5e-6,
 
@@ -169,7 +169,7 @@ training_args = GRPOConfig(
     fp16=False,
     gradient_checkpointing=True,
 
-    max_completion_length=24,
+    max_completion_length=48,
 
     gradient_checkpointing_kwargs={"use_reentrant": False},
 
