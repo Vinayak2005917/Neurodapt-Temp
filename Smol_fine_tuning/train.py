@@ -17,7 +17,7 @@ from peft import LoraConfig
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 
 from trl import GRPOConfig, GRPOTrainer
-from reward_scorer import MemoryRewardScorer, reward_function_factory
+from reward_socrer import MemoryRewardScorer, reward_function_factory
 
 
 MODEL_PATH = "./models/Qwen2.5-0.5B-Instruct"
@@ -58,6 +58,7 @@ for example_index in valid_indices:
 
     target_clause = clauses[target_index]["text"]
     target_word_count = len(target_clause.split())
+    min_rewrite_words = (7 * target_word_count + 9) // 10
     max_rewrite_words = (3 * target_word_count) // 2
 
     context_lines = []
@@ -78,7 +79,7 @@ Do not use information from other clauses.
 
 Output exactly one sentence.
 
-Keep the rewrite at or below {max_rewrite_words} words (150% of the original's {target_word_count} words).
+Keep the rewrite between {min_rewrite_words} and {max_rewrite_words} words (70% to 150% of the original's {target_word_count} words).
 
 Context:
 
